@@ -10,9 +10,9 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/menu.png" width="300" alt="Devices grouped by room, with room shortcuts">
+  <img src="docs/screenshots/dropdown.png" width="340" alt="The neo-node dropdown under the menu bar: room shortcuts and devices">
   &nbsp;
-  <img src="docs/screenshots/room.png" width="300" alt="One room picked from the shortcuts">
+  <img src="docs/screenshots/dropdown-detail.png" width="340" alt="A WiZ light's details in the dropdown: scene, brightness, warmth, name and room">
 </p>
 
 > Screenshots use the built-in demo data (`-demo`), not a real home.
@@ -29,14 +29,6 @@
 | **Tidy** | Hide offline devices, All Off, launch at login, right-click the menu bar icon to quit. |
 
 WiZ and Samsung devices are marked **Local only**: they work while your Mac is on your home Wi‑Fi.
-
-<p align="center">
-  <img src="docs/screenshots/light.png" width="250" alt="Light detail: mode, brightness and warmth">
-  &nbsp;
-  <img src="docs/screenshots/tv.png" width="250" alt="Samsung TV detail: remote buttons, name and room">
-  &nbsp;
-  <img src="docs/screenshots/settings.png" width="250" alt="Settings: account, Wi‑Fi devices, options">
-</p>
 
 <p align="center">
   <img src="docs/screenshots/cameras.png" width="620" alt="Camera window with two monitors side by side">
@@ -102,10 +94,10 @@ done
 | `-wizDiagnostics` | Shows what each known WiZ light reports (state, model, config) |
 | `-keychainDiagnostics` | Shows where the saved login is found |
 
-The screenshots above were made with:
+The screenshots above use the demo data, opened from the menu bar:
 
 ```sh
-open build/Build/Products/Debug/neo-node.app --args -demo -hidesOfflineDevices NO -window
+open build/Build/Products/Debug/neo-node.app --args -demo -hidesOfflineDevices NO
 ```
 
 ## Notes
