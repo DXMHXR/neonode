@@ -97,19 +97,25 @@ enum DeviceControl: Identifiable {
     case buttons(code: String, keys: [String])
     /// One-of-several modes shown as icon buttons (WiZ TV sync); the first option means "off".
     case modes(code: String, options: [String])
+    /// Tuya `colour_data(_v2)`: {h 0–360, s, v 0–`scale`} (1000 for v2, 255 for the older data point).
+    case color(code: String, scale: Int)
 
     var id: String {
         switch self {
-        case .toggle(let code), .slider(let code, _), .picker(let code, _), .buttons(let code, _), .modes(let code, _): code
+        case .toggle(let code), .slider(let code, _), .picker(let code, _), .buttons(let code, _), .modes(let code, _),
+             .color(let code, _): code
         }
     }
 
     static func controls(for device: TuyaDevice, specification: TuyaSpecification?) -> [DeviceControl] {
         // While a WiZ light follows the TV, warmth doesn't apply.
         let syncing = (device.value(for: "tv_sync")?.stringValue).map { $0 != "Off" } ?? false
+        // In colour mode a Tuya light takes brightness from the colour itself; white brightness and warmth don't apply.
+        let colourMode = device.value(for: "work_mode")?.stringValue == "colour"
         let skipped: (String) -> Bool = { code in
             code == device.powerCode || code.contains("countdown") || code.contains("timer")
                 || (syncing && code.hasPrefix("temp_value"))
+                || (colourMode && (code.hasPrefix("temp_value") || code.hasPrefix("bright_value")))
         }
         guard let functions = specification?.functions, !functions.isEmpty else {
             return device.status
@@ -130,6 +136,9 @@ enum DeviceControl: Identifiable {
             case "modes":
                 guard let options = function.enumRange?.range, options.count > 1 else { return nil }
                 return .modes(code: function.code, options: options)
+            case "json" where function.code == "colour_data_v2" || function.code == "colour_data":
+                guard colourMode else { return nil }
+                return .color(code: function.code, scale: function.code == "colour_data_v2" ? 1000 : 255)
             case "keys":
                 guard let keys = function.enumRange?.range, !keys.isEmpty else { return nil }
                 return .buttons(code: function.code, keys: keys)
@@ -144,6 +153,7 @@ enum DeviceControl: Identifiable {
     private var order: Int {
         switch self {
         case .modes: -2
+        case .color: 0
         case .buttons: -1
         case .picker: 0
         case .slider: 1

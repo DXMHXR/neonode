@@ -117,17 +117,24 @@ struct DeviceControlRow: View {
                         .foregroundStyle(.secondary)
                         .contentTransition(.numericText())
                 }
+                // No `step:` here: on macOS a stepped slider draws a tick per step, which turns into a solid
+                // line under the track for 1000-step ranges. Snap to the device's step when sending instead.
                 Slider(
                     value: Binding(get: { current }, set: { draft = $0 }),
-                    in: Double(range.min)...Double(range.max),
-                    step: Double(max(range.step ?? 1, 1))
+                    in: Double(range.min)...Double(range.max)
                 ) { editing in
                     guard !editing, let value = draft else { return }
-                    store.set(device.id, code: code, value: .int(Int(value.rounded())))
+                    let step = Double(max(range.step ?? 1, 1))
+                    let snapped = (Double(range.min) + ((value - Double(range.min)) / step).rounded() * step)
+                        .clamped(to: Double(range.min)...Double(range.max))
+                    store.set(device.id, code: code, value: .int(Int(snapped)))
                     draft = nil
                 }
                 .tint(device.tint)
             }
+
+        case .color(let code, let scale):
+            ColorControl(device: device, code: code, scale: scale)
 
         case .modes(let code, let options):
             let current = device.value(for: code)?.stringValue ?? options[0]
@@ -369,5 +376,115 @@ enum SyncModeSymbol {
         case "Rhythmic": "headphones"
         default: "tv"
         }
+    }
+}
+
+private extension Comparable {
+    func clamped(to range: ClosedRange<Self>) -> Self { min(max(self, range.lowerBound), range.upperBound) }
+}
+
+/// Hue / saturation / brightness for a Tuya light in colour mode, plus quick swatches.
+struct ColorControl: View {
+    @Environment(DeviceStore.self) private var store
+    let device: TuyaDevice
+    let code: String
+    let scale: Int
+
+    @State private var draft: HSV?
+
+    struct HSV: Codable, Equatable {
+        var h: Double
+        var s: Double
+        var v: Double
+    }
+
+    private var current: HSV {
+        if let draft { return draft }
+        if let text = device.value(for: code)?.stringValue,
+           let value = try? JSONDecoder().decode(HSV.self, from: Data(text.utf8)) { return value }
+        return HSV(h: 0, s: Double(scale), v: Double(scale))
+    }
+
+    private static let swatches: [(hue: Double, sat: Double)] = [
+        (0, 1), (30, 1), (55, 1), (120, 1), (180, 1), (220, 1), (275, 1), (320, 1), (35, 0.25),
+    ]
+
+    var body: some View {
+        let hsv = current
+        let swatchColor = Color(hue: hsv.h / 360, saturation: hsv.s / Double(scale), brightness: 1)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Colour")
+                Spacer()
+                Circle().fill(swatchColor).frame(width: 18, height: 18)
+                    .overlay(Circle().strokeBorder(.white.opacity(0.6), lineWidth: 1))
+            }
+
+            HStack(spacing: 6) {
+                ForEach(Self.swatches.indices, id: \.self) { index in
+                    let swatch = Self.swatches[index]
+                    Button {
+                        send(HSV(h: swatch.hue, s: swatch.sat * Double(scale), v: hsv.v))
+                    } label: {
+                        Circle()
+                            .fill(Color(hue: swatch.hue / 360, saturation: swatch.sat, brightness: 1))
+                            .frame(width: 22, height: 22)
+                            .overlay(Circle().strokeBorder(.white.opacity(0.5), lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                    .frame(maxWidth: .infinity)
+                }
+            }
+
+            gradientSlider("Hue", value: hsv.h, range: 0...360, display: "\(Int(hsv.h))°",
+                           colors: stride(from: 0.0, through: 1.0, by: 1.0 / 6).map { Color(hue: $0, saturation: 1, brightness: 1) }) {
+                var next = hsv; next.h = $0; return next
+            }
+            gradientSlider("Saturation", value: hsv.s, range: 0...Double(scale),
+                           display: "\(Int((hsv.s / Double(scale) * 100).rounded()))%",
+                           colors: [.white, Color(hue: hsv.h / 360, saturation: 1, brightness: 1)]) {
+                var next = hsv; next.s = $0; return next
+            }
+            gradientSlider("Brightness", value: hsv.v, range: Double(scale) / 100...Double(scale),
+                           display: "\(Int((hsv.v / Double(scale) * 100).rounded()))%",
+                           colors: [.black, swatchColor]) {
+                var next = hsv; next.v = $0; return next
+            }
+        }
+    }
+
+    /// A slider drawn over a gradient track that shows what moving it does.
+    private func gradientSlider(
+        _ title: String, value: Double, range: ClosedRange<Double>, display: String, colors: [Color],
+        update: @escaping (Double) -> HSV
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(title)
+                Spacer()
+                Text(display).monospacedDigit().foregroundStyle(.secondary)
+            }
+            Slider(value: Binding(get: { value }, set: { draft = update($0) }), in: range) { editing in
+                guard !editing, let draft else { return }
+                send(draft)
+            }
+            .tint(.clear)
+            .background {
+                Capsule()
+                    .fill(LinearGradient(colors: colors, startPoint: .leading, endPoint: .trailing))
+                    .frame(height: 6)
+                    .padding(.horizontal, 2)
+            }
+        }
+    }
+
+    private func send(_ hsv: HSV) {
+        let rounded = HSV(h: hsv.h.rounded(), s: hsv.s.rounded(), v: hsv.v.rounded())
+        draft = nil
+        guard let data = try? JSONEncoder().encode(["h": Int(rounded.h), "s": Int(rounded.s), "v": Int(rounded.v)]) else { return }
+        if device.value(for: "work_mode")?.stringValue != "colour" {
+            store.set(device.id, code: "work_mode", value: .string("colour"))
+        }
+        store.set(device.id, code: code, value: .string(String(decoding: data, as: UTF8.self)))
     }
 }

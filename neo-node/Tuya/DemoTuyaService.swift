@@ -8,6 +8,7 @@ actor DemoTuyaService: TuyaService {
             .init(code: "work_mode", value: .string("white")),
             .init(code: "bright_value_v2", value: .int(720)),
             .init(code: "temp_value_v2", value: .int(400)),
+            .init(code: "colour_data_v2", value: .string(#"{"h":275,"s":800,"v":1000}"#)),
         ]),
         TuyaDevice(id: "d2", name: "Desk Lamp", category: "dj", online: true, status: [
             .init(code: "switch_led", value: .bool(false)),
@@ -47,7 +48,9 @@ actor DemoTuyaService: TuyaService {
         ]),
         TuyaDevice(id: "d7", name: "Desk Light Strip", category: "dd", online: true, status: [
             .init(code: "switch_led", value: .bool(true)),
+            .init(code: "work_mode", value: .string("colour")),
             .init(code: "bright_value_v2", value: .int(500)),
+            .init(code: "colour_data_v2", value: .string(#"{"h":200,"s":850,"v":900}"#)),
         ]),
         TuyaDevice(id: "d6", name: "Garden Lights", category: "dd", online: false, status: [
             .init(code: "switch_led", value: .bool(false)),
@@ -88,6 +91,8 @@ actor DemoTuyaService: TuyaService {
             switch status.code {
             case "bright_value_v2", "temp_value_v2":
                 TuyaFunction(code: status.code, type: "Integer", values: #"{"min":10,"max":1000,"scale":0,"step":1}"#)
+            case "colour_data_v2":
+                TuyaFunction(code: status.code, type: "Json", values: #"{"h":{"min":0,"max":360},"s":{"min":0,"max":1000},"v":{"min":0,"max":1000}}"#)
             case "work_mode":
                 TuyaFunction(code: status.code, type: "Enum", values: #"{"range":["white","colour","scene","music"]}"#)
             default:
