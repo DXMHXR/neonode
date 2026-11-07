@@ -1,4 +1,4 @@
-name: NeoNode
+name: neo-node
 options:
   bundleIdPrefix: com.kylswich
   createIntermediateGroups: true
@@ -11,23 +11,23 @@ settings:
     CODE_SIGN_STYLE: Automatic
     DEVELOPMENT_TEAM: VNB5T45XDL
     ENABLE_HARDENED_RUNTIME: YES
-    MARKETING_VERSION: "1.0"
-    CURRENT_PROJECT_VERSION: "1"
+    MARKETING_VERSION: "1.0.1"
+    CURRENT_PROJECT_VERSION: "2"
 targets:
-  NeoNode:
+  neo-node:
     type: application
     platform: macOS
     sources:
-      - NeoNode
+      - neo-node
     info:
-      path: NeoNode/Info.plist
+      path: neo-node/Info.plist
       properties:
         NSAppTransportSecurity:
           NSAllowsArbitraryLoadsForMedia: true
           NSAllowsLocalNetworking: true
-        NSLocalNetworkUsageDescription: NeoNode finds and controls your Philips WiZ lights and Samsung TVs on your Wi‑Fi.
+        NSLocalNetworkUsageDescription: neo-node finds and controls your Philips WiZ lights and Samsung TVs on your Wi‑Fi.
     entitlements:
-      path: NeoNode/NeoNode.entitlements
+      path: neo-node/neo-node.entitlements
       properties:
         com.apple.security.app-sandbox: true
         com.apple.security.network.client: true
@@ -37,8 +37,10 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.kylswich.neonode
-        PRODUCT_NAME: NeoNode
+        PRODUCT_NAME: neo-node
+        PRODUCT_MODULE_NAME: NeoNode
         GENERATE_INFOPLIST_FILE: true
         INFOPLIST_KEY_LSUIElement: YES
-        INFOPLIST_KEY_CFBundleDisplayName: NeoNode
+        INFOPLIST_KEY_CFBundleDisplayName: neo-node
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
