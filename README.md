@@ -105,3 +105,13 @@ open build/Build/Products/Debug/neo-node.app --args -demo -hidesOfflineDevices N
 - Devices refresh when the menu opens (at most every 10 s); there's no background polling.
 - A Tuya Cloud project's free trial must be extended every few months on the Tuya platform, or its API calls stop.
 - Data moved from the old `com.rahmad.TuyaBar` bundle automatically on first launch (`neo-node/Store/Migration.swift`).
+
+## License
+
+neo-node is free software under the [GNU General Public License v3.0](LICENSE): you can use, study, change and share it, and changed versions you distribute must stay under GPL v3 with their source available.
+
+Copyright © 2026 Rahmad Hidayat.
+
+The Smart Life login is ported from Tuya's MIT-licensed [`tuya-device-sharing-sdk`](https://github.com/tuya/tuya-device-sharing-sdk); see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+Contributions are welcome. By opening a pull request you agree that your contribution is licensed under GPL v3.
