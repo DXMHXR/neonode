@@ -52,9 +52,7 @@ struct DeviceDetailView: View {
                 .disabled(!device.online)
             }
 
-            if DeviceStore.isLocal(device.id) {
-                LocalDeviceSettings(device: device)
-            }
+            DeviceNameAndRoom(device: device)
 
             if let message = store.errorMessage {
                 ErrorBanner(message: message) { store.errorMessage = nil }
@@ -131,6 +129,50 @@ struct DeviceControlRow: View {
                 .tint(device.tint)
             }
 
+        case .modes(let code, let options):
+            let current = device.value(for: code)?.stringValue ?? options[0]
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text(DataPointLabel.title(for: code))
+                    Spacer()
+                    if current != options[0] {
+                        Button("Stop") { store.set(device.id, code: code, value: .string(options[0])) }
+                            .buttonStyle(.plain)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.tint)
+                    }
+                }
+                HStack(spacing: 6) {
+                    ForEach(options.dropFirst(), id: \.self) { option in
+                        let selected = option == current
+                        Button {
+                            store.set(device.id, code: code, value: .string(option))
+                        } label: {
+                            VStack(spacing: 4) {
+                                Image(systemName: SyncModeSymbol.symbol(for: option))
+                                    .font(.system(size: 16, weight: .semibold))
+                                    .frame(height: 20)
+                                Text(option)
+                                    .font(.caption2.weight(.medium))
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.8)
+                            }
+                            .frame(maxWidth: .infinity, minHeight: 52)
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 14)
+                                    .strokeBorder(.white.opacity(selected ? 0.9 : 0), lineWidth: 2)
+                            }
+                            .contentShape(.rect(cornerRadius: 14))
+                        }
+                        .buttonStyle(.plain)
+                        .glassEffect(
+                            selected ? .regular.tint(device.tint.opacity(0.55)).interactive() : .regular.interactive(),
+                            in: .rect(cornerRadius: 14)
+                        )
+                    }
+                }
+            }
+
         case .buttons(let code, let keys):
             HStack(spacing: 8) {
                 ForEach(keys, id: \.self) { key in
@@ -173,6 +215,10 @@ struct DeviceControlRow: View {
     }
 
     private func display(_ value: Double, range: TuyaFunction.IntegerRange, code: String) -> String {
+        // A 0/10…100 range is already a percentage (WiZ dimming): show the value itself.
+        if range.max == 100, code.contains("bright") || code.contains("percent") {
+            return "\(Int(value.rounded()))%"
+        }
         if code.contains("bright") || code.contains("temp_value") || code.contains("percent") {
             let percent = (value - Double(range.min)) / Double(range.max - range.min) * 100
             return "\(Int(percent.rounded()))%"
@@ -200,43 +246,128 @@ struct RemoteKey {
     }
 }
 
-/// Name and room for WiZ and Samsung devices, which don't report either over the local network.
-struct LocalDeviceSettings: View {
+/// A custom name for any device, kept in neo-node only (the name on Tuya or the device is untouched),
+/// plus a room for WiZ and Samsung devices, which don't report one over the local network.
+struct DeviceNameAndRoom: View {
     @Environment(DeviceStore.self) private var store
     let device: TuyaDevice
     @State private var name = ""
+    @State private var renameOnServer = false
+    @State private var isSaving = false
+
+    private var original: String? { store.originalName(of: device.id) }
+    private var serverRenameAvailable: Bool { store.canRenameOnServer(device.id) }
+
+    private func save() {
+        guard name != device.name else { return }
+        if renameOnServer, serverRenameAvailable {
+            isSaving = true
+            Task {
+                await store.renameOnServer(device.id, to: name)
+                isSaving = false
+            }
+        } else {
+            store.rename(device.id, to: name)
+        }
+    }
+    private var isCustom: Bool { store.localNames[device.id] != nil }
 
     var body: some View {
         VStack(spacing: 0) {
             HStack {
                 Text("Name")
                 Spacer()
-                TextField("Name", text: $name)
+                TextField(original ?? "Name", text: $name)
                     .textFieldStyle(.plain)
                     .multilineTextAlignment(.trailing)
                     .foregroundStyle(.secondary)
-                    .onSubmit { store.rename(device.id, to: name) }
+                    .onSubmit(save)
+                if isSaving { ProgressView().controlSize(.small) }
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
 
-            Divider().padding(.horizontal, 14)
-
-            Picker("Room", selection: Binding(
-                get: { store.room(for: device.id)?.id ?? "" },
-                set: { store.assignRoom($0.isEmpty ? nil : $0, to: device.id) }
-            )) {
-                Text("None").tag("")
-                ForEach(store.knownRooms, id: \.id) { room in
-                    Text(room.name).tag(room.id)
+            VStack(alignment: .leading, spacing: 4) {
+                if !DeviceStore.isLocal(device.id) { // WiZ / Samsung: neo-node is the only place to rename
+                    Picker("Rename", selection: $renameOnServer) {
+                        Text("neo-node only").tag(false)
+                        Text("Also on Tuya").tag(true)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .disabled(!serverRenameAvailable)
                 }
+                Text(renameHint)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .pickerStyle(.menu)
             .padding(.horizontal, 14)
-            .padding(.vertical, 10)
+            .padding(.bottom, 10)
+
+            if isCustom, let original {
+                HStack {
+                    Text("Original: \(original)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    Spacer()
+                    Button("Reset") {
+                        store.rename(device.id, to: "")
+                        name = original
+                    }
+                    .buttonStyle(.plain)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tint)
+                }
+                .padding(.horizontal, 14)
+                .padding(.bottom, 8)
+            }
+
+            if DeviceStore.isLocal(device.id) {
+                Divider().padding(.horizontal, 14)
+
+                Picker("Room", selection: Binding(
+                    get: { store.room(for: device.id)?.id ?? "" },
+                    set: { store.assignRoom($0.isEmpty ? nil : $0, to: device.id) }
+                )) {
+                    Text("None").tag("")
+                    ForEach(store.knownRooms, id: \.id) { room in
+                        Text(room.name).tag(room.id)
+                    }
+                }
+                .pickerStyle(.menu)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+            }
         }
         .glassEffect(.regular, in: .rect(cornerRadius: 20))
         .onAppear { name = device.name }
-        .onDisappear { if name != device.name { store.rename(device.id, to: name) } }
+        .onDisappear(perform: save)
+    }
+
+    private var renameHint: String {
+        if serverRenameAvailable {
+            return renameOnServer
+                ? "Renames it in the Smart Life / Tuya app too."
+                : "Only neo-node shows the new name."
+        }
+        if DeviceStore.isLocal(device.id) {
+            return "WiZ and Samsung names can only be changed in neo-node."
+        }
+        return "Renaming on Tuya needs the Cloud project sign-in; the Smart Life sign-in can't change server names. Rename it in the Smart Life app instead."
+    }
+}
+
+enum SyncModeSymbol {
+    /// The WiZ app's icons for its TV-sync modes.
+    static func symbol(for mode: String) -> String {
+        switch mode {
+        case "Cinematic": "film"
+        case "Vibrant": "gamecontroller"
+        case "Relaxation": "sofa"
+        case "Rhythmic": "headphones"
+        default: "tv"
+        }
     }
 }

@@ -51,6 +51,8 @@ protocol TuyaService: Sendable {
     func rooms(of deviceIDs: [String]) async -> [String: TuyaRoom]
     /// A fresh HLS live-stream URL for a camera (they expire, so allocate one per playback).
     func streamURL(of deviceID: String) async throws -> URL
+    /// Renames the device on the server (what the Smart Life / Tuya app shows too).
+    func renameOnServer(_ deviceID: String, to name: String) async throws
 }
 
 extension TuyaService {
@@ -58,6 +60,10 @@ extension TuyaService {
 
     func streamURL(of deviceID: String) async throws -> URL {
         throw TuyaError.api(code: -1, message: "This device has no live stream")
+    }
+
+    func renameOnServer(_ deviceID: String, to name: String) async throws {
+        throw TuyaError.api(code: -1, message: "Renaming on the server isn't available for this device")
     }
 }
 
@@ -101,6 +107,13 @@ actor TuyaClient: TuyaService {
         let allocation: StreamAllocation = try await perform("POST", "/v1.0/devices/\(deviceID)/stream/actions/allocate", body: body)
         guard let url = URL(string: allocation.url) else { throw TuyaError.api(code: -1, message: "This camera has no live stream") }
         return url
+    }
+
+    /// Tuya OpenAPI "Modify device name".
+    func renameOnServer(_ deviceID: String, to name: String) async throws {
+        struct Body: Encodable { let name: String }
+        let body = try JSONEncoder().encode(Body(name: name))
+        let _: Bool = try await perform("PUT", "/v1.0/devices/\(deviceID)", body: body)
     }
 
     func send(_ commands: [TuyaCommand], to deviceID: String) async throws {

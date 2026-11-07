@@ -39,12 +39,45 @@ actor WiZService: TuyaService {
     }
 
     func specification(of deviceID: String) async throws -> TuyaSpecification {
-        TuyaSpecification(functions: [
+        let mac = String(deviceID.dropFirst(Self.prefix.count))
+        let tvModes = await tvSyncModes(of: mac)
+        return TuyaSpecification(functions: [
             TuyaFunction(code: "switch_led", type: "Boolean", values: "{}"),
             TuyaFunction(code: "bright_value", type: "Integer", values: #"{"min":10,"max":100,"scale":0,"step":1}"#),
             TuyaFunction(code: "temp_value", type: "Integer", values: #"{"min":2200,"max":6500,"scale":0,"step":100}"#),
             TuyaFunction(code: "scene", type: "Enum", values: Self.sceneRangeJSON),
-        ])
+        ] + (tvModes.isEmpty ? [] : [
+            TuyaFunction(code: "tv_sync", type: "Modes", values: Self.rangeJSON(["Off"] + Self.inAppOrder(tvModes).map(Self.tvSyncName))),
+        ]))
+    }
+
+    // MARK: - TV sync (WiZ Ambient TV lights)
+
+    /// MAC → the TV-sync scene IDs the light reports in `getModelConfig.syncboxAlgos` (e.g. 201…204).
+    private var tvModesByMac: [String: [Int]] = [:]
+
+    private func tvSyncModes(of mac: String) async -> [Int] {
+        if let cached = tvModesByMac[mac] { return cached }
+        guard let ip = hosts[mac] else { return [] }
+        let request = Data(#"{"method":"getModelConfig","params":{}}"#.utf8)
+        guard let reply = await UDP.query(request, host: ip, port: Self.port, timeout: 1, firstReplyOnly: true).first,
+              let json = try? JSONSerialization.jsonObject(with: reply.data) as? [String: Any],
+              let result = json["result"] as? [String: Any] else { return [] }
+        let modes = ((result["syncboxAlgos"] as? [String: Any])?.keys.compactMap { Int($0) } ?? []).sorted()
+        tvModesByMac[mac] = modes
+        return modes
+    }
+
+    /// Names for TV-sync scenes, each read off an Ambient TV light (ESP28_MHORGB, fw 1.39.3) set to that
+    /// mode in the WiZ app. Not the app's order: Rhythmic is 203 and Relaxation 204.
+    static func tvSyncName(_ id: Int) -> String {
+        switch id {
+        case 201: "Cinematic"
+        case 202: "Vibrant"
+        case 203: "Rhythmic"
+        case 204: "Relaxation"
+        default: "TV sync \(id - 199)"
+        }
     }
 
     func send(_ commands: [TuyaCommand], to deviceID: String) async throws {
@@ -63,6 +96,13 @@ actor WiZService: TuyaService {
                     params["sceneId"] = id
                 } else {
                     params["temp"] = 2700 // "None": back to plain white
+                }
+            case "tv_sync":
+                let name = command.value.stringValue ?? ""
+                if let id = (201...210).first(where: { Self.tvSyncName($0) == name }) {
+                    params["sceneId"] = id
+                } else {
+                    params["temp"] = 2700 // "Off": stop syncing, back to plain white
                 }
             default: continue
             }
@@ -86,13 +126,28 @@ actor WiZService: TuyaService {
 
     /// Raw replies from every known light (diagnostics: what a light reports about itself and its mode).
     func diagnostics() async -> String {
+        _ = try? await devices() // broadcast first: picks up lights whose address changed
         var lines: [String] = []
         for (mac, ip) in hosts.sorted(by: { $0.key < $1.key }) {
             lines.append("\(mac) @ \(ip)")
-            for method in ["getPilot", "getSystemConfig", "getModelConfig", "getUserConfig"] {
+            // Read-only probes ("get…"): unknown ones come back as "Method not found" and are skipped,
+            // so only what the light actually supports is listed.
+            let probes = [
+                "getPilot", "getSystemConfig", "getModelConfig", "getUserConfig", "getDevInfo", "getWifiConfig",
+                "getSyncbox", "getSyncboxConfig", "getSyncboxState", "getSyncboxParams", "getSyncboxSettings",
+                "getSyncConfig", "getSyncParams", "getSyncState", "getSync", "getTvSync", "getTvSyncConfig",
+                "getScreenSync", "getAmbient", "getAmbientConfig", "getAlgoConfig", "getAlgoParams", "getAlgo",
+                "getSceneConfig", "getSceneParams", "getCustomScene", "getEffects", "getEffectConfig",
+                "getZones", "getSyncZone", "getColorTuning", "getColorProfile", "getCctTable", "getPower",
+                "getFavs", "getPresets", "getRhythm", "getMusicSync", "getGradient", "getSegments",
+            ]
+            for method in probes {
                 let request = Data(#"{"method":"\#(method)","params":{}}"#.utf8)
-                let reply = await UDP.query(request, host: ip, port: Self.port, timeout: 1, firstReplyOnly: true).first
-                lines.append("\(method): " + (reply.map { String(decoding: $0.data, as: UTF8.self) } ?? "no reply"))
+                guard let reply = await UDP.query(request, host: ip, port: Self.port, timeout: 0.8, firstReplyOnly: true).first
+                else { lines.append("\(method): no reply"); continue }
+                let text = String(decoding: reply.data, as: UTF8.self)
+                if text.contains("Method not found") || text.contains("-32601") { continue }
+                lines.append("\(method): " + text)
             }
         }
         return lines.isEmpty ? "No WiZ lights known yet" : lines.joined(separator: "\n")
@@ -123,8 +178,11 @@ actor WiZService: TuyaService {
             var status: [TuyaStatus] = [.init(code: "switch_led", value: .bool(state))]
             if let dimming { status.append(.init(code: "bright_value", value: .int(dimming))) }
             if let temp { status.append(.init(code: "temp_value", value: .int(temp))) }
-            let scene = WiZService.scenes.first { $0.id == sceneID }?.name ?? "None"
+            // TV sync (sceneId > 200) and ordinary scenes are separate controls.
+            let syncing = (sceneID ?? 0) > 200
+            let scene = syncing ? "None" : (WiZService.scenes.first { $0.id == sceneID }?.name ?? "None")
             status.append(.init(code: "scene", value: .string(scene)))
+            status.append(.init(code: "tv_sync", value: .string(syncing ? WiZService.tvSyncName(sceneID ?? 0) : "Off")))
             return TuyaDevice(
                 id: WiZService.prefix + mac, name: WiZService.defaultName(mac), category: "dj", online: true,
                 productName: "WiZ", status: status
@@ -145,8 +203,15 @@ actor WiZService: TuyaService {
         (28, "Halloween"), (29, "Candlelight"), (30, "Golden white"), (31, "Pulse"), (32, "Steampunk"),
     ]
 
-    private static var sceneRangeJSON: String {
-        let names = ["None"] + scenes.map(\.name)
+    /// The WiZ app lists TV-sync modes as Cinematic, Vibrant, Relaxation, Rhythmic (201, 202, 204, 203).
+    private static func inAppOrder(_ ids: [Int]) -> [Int] {
+        let order = [201, 202, 204, 203]
+        return ids.sorted { (order.firstIndex(of: $0) ?? $0, $0) < (order.firstIndex(of: $1) ?? $1, $1) }
+    }
+
+    private static var sceneRangeJSON: String { rangeJSON(["None"] + scenes.map(\.name)) }
+
+    private static func rangeJSON(_ names: [String]) -> String {
         let data = (try? JSONSerialization.data(withJSONObject: ["range": names])) ?? Data()
         return String(decoding: data, as: UTF8.self)
     }

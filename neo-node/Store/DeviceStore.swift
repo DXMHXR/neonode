@@ -97,11 +97,40 @@ final class DeviceStore {
         return knownRooms.first { $0.id == roomID }
     }
 
+    /// Names reported by Tuya or the device itself, before any custom name.
+    private(set) var serverNames: [String: String] = [:]
+
+    func originalName(of deviceID: String) -> String? { serverNames[deviceID] }
+
+    /// Renames a device in neo-node only. An empty name, or the original one, goes back to the original.
     func rename(_ deviceID: String, to name: String) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        localNames[deviceID] = trimmed.isEmpty ? nil : trimmed
-        if let index = devices.firstIndex(where: { $0.id == deviceID }), !trimmed.isEmpty {
-            devices[index].name = trimmed
+        let original = serverNames[deviceID]
+        let isCustom = !trimmed.isEmpty && trimmed != original
+        localNames[deviceID] = isCustom ? trimmed : nil
+        if let index = devices.firstIndex(where: { $0.id == deviceID }) {
+            devices[index].name = isCustom ? trimmed : (original ?? devices[index].name)
+        }
+    }
+
+    /// Server renames need Tuya's OpenAPI, which only the Cloud project sign-in offers; the Smart Life
+    /// QR sign-in has no rename call, and WiZ / Samsung names aren't stored anywhere neo-node can reach.
+    func canRenameOnServer(_ deviceID: String) -> Bool {
+        guard !isDemo, !Self.isLocal(deviceID), case .cloudProject = account else { return false }
+        return true
+    }
+
+    /// Renames the device on Tuya too, then drops any neo-node-only name for it.
+    func renameOnServer(_ deviceID: String, to name: String) async {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let service = service(for: deviceID) else { return }
+        do {
+            try await service.renameOnServer(deviceID, to: trimmed)
+            serverNames[deviceID] = trimmed
+            localNames[deviceID] = nil
+            if let index = devices.firstIndex(where: { $0.id == deviceID }) { devices[index].name = trimmed }
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
 
@@ -245,12 +274,12 @@ final class DeviceStore {
         async let samsungDevices = (try? await samsung?.devices()) ?? []
         do {
             let names = localNames
-            let local = (await wizDevices + samsungDevices).map { device in
-                var device = device
-                if let name = names[device.id] { device.name = name }
-                return device
+            var fresh = try await service.devices() + (await wizDevices + samsungDevices)
+            // Custom names live only in neo-node; the name on Tuya / the device stays as it is.
+            for index in fresh.indices {
+                serverNames[fresh[index].id] = fresh[index].name
+                if let name = names[fresh[index].id] { fresh[index].name = name }
             }
-            let fresh = try await service.devices() + local
             // Keep optimistic values for devices with a command still in flight.
             devices = Self.sorted(fresh.map { device in pending.contains(device.id) ? (self.device(device.id) ?? device) : device })
             lastRefresh = .now
